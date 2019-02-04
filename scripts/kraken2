@@ -13,7 +13,8 @@ use File::Basename;
 use Getopt::Long;
 
 my $PROG = basename $0;
-my $KRAKEN2_DIR = "#####=KRAKEN2_DIR=#####";
+# my $KRAKEN2_DIR = "#####=KRAKEN2_DIR=#####";
+my $KRAKEN2_DIR = "/home/yesimon/src/kraken2";
 
 # Test to see if the executables got moved, try to recover if we can
 if (! -e "$KRAKEN2_DIR/classify") {
@@ -32,6 +33,7 @@ my $BZIP2_MAGIC = "BZ";
 my $quick = 0;
 my $min_hits = 1;
 my $db_prefix;
+my @blacklist_db_prefixes;
 my $threads;
 my $memory_mapping = 0;
 my $gunzip = 0;
@@ -52,6 +54,7 @@ GetOptions(
   "help" => \&display_help,
   "version" => \&display_version,
   "db=s" => \$db_prefix,
+  "blacklist-db=s" => \@blacklist_db_prefixes,
   "threads=i" => \$threads,
   "quick" => \$quick,
   "unclassified-out=s" => \$unclassified_out,
@@ -162,6 +165,10 @@ if ($compressed) {
     push @replacement_ARGV, "/dev/fd/$fd";
   }
   @ARGV = @replacement_ARGV;
+}
+
+foreach my $blacklist_db_prefix (@blacklist_db_prefixes) {
+    push @flags, "-B", $blacklist_db_prefix;
 }
 
 exec $CLASSIFY, @flags, @ARGV;

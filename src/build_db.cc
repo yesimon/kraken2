@@ -35,6 +35,7 @@ struct Options {
   string taxonomy_filename;
   size_t block_size;
   int num_threads;
+  bool blacklist;
   bool input_is_protein;
   ssize_t k, l;
   size_t capacity;
@@ -69,6 +70,7 @@ int main(int argc, char **argv) {
   opts.block_size = DEFAULT_BLOCK_SIZE;
   opts.min_clear_hash_value = 0;
   opts.maximum_capacity = 0;
+  opts.blacklist = false;
   ParseCommandLine(argc, argv, opts);
 
   omp_set_num_threads( opts.num_threads );
@@ -83,8 +85,12 @@ int main(int argc, char **argv) {
   Taxonomy taxonomy(opts.taxonomy_filename.c_str());
   taxonomy.GenerateExternalToInternalIDMap();
   size_t bits_needed_for_value = 1;
-  while ((1 << bits_needed_for_value) < (ssize_t) taxonomy.node_count())
-    bits_needed_for_value++;
+  if (!opts.blacklist) {
+    while ((1 << bits_needed_for_value) < (ssize_t) taxonomy.node_count())
+      bits_needed_for_value++;
+  } else {
+    bits_needed_for_value = 16;
+  }
 
   auto actual_capacity = opts.capacity;
   if (opts.maximum_capacity) {
@@ -96,7 +102,7 @@ int main(int argc, char **argv) {
   }
 
   CompactHashTable kraken_index(actual_capacity, 32 - bits_needed_for_value,
-      bits_needed_for_value);
+    bits_needed_for_value);
   std::cerr << "CHT created with " << bits_needed_for_value << " bits reserved for taxid." << std::endl;
 
   ProcessSequences(opts, ID_to_taxon_map, kraken_index, taxonomy);
@@ -147,9 +153,13 @@ void ProcessSequences(Options &opts, map<string, uint64_t> &ID_to_taxon_map,
       while (reader.NextSequence(sequence)) {
         auto all_sequence_ids = ExtractNCBISequenceIDs(sequence.header);
         uint64_t taxid = 0;
-        for (auto &seqid : all_sequence_ids) {
-          auto ext_taxid = ID_to_taxon_map[seqid];
-          taxid = taxonomy.LowestCommonAncestor(taxid, taxonomy.GetInternalID(ext_taxid));
+        if (!opts.blacklist) {
+          for (auto &seqid : all_sequence_ids) {
+            auto ext_taxid = ID_to_taxon_map[seqid];
+            taxid = taxonomy.LowestCommonAncestor(taxid, taxonomy.GetInternalID(ext_taxid));
+          }
+        } else {
+          taxid = 1;
         }
         if (taxid) {
           // Add terminator for protein sequences if not already there
@@ -212,7 +222,7 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
   int opt;
   long long sig;
 
-  while ((opt = getopt(argc, argv, "?hB:c:H:m:n:o:t:k:l:s:S:T:p:M:X")) != -1) {
+  while ((opt = getopt(argc, argv, "?hB:c:bH:m:n:o:t:k:l:s:S:T:p:M:X")) != -1) {
     switch (opt) {
       case 'h' : case '?' :
         usage(0);
@@ -222,6 +232,9 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
         if (sig < 1)
           errx(EX_USAGE, "can't have negative block size");
         opts.block_size = sig;
+        break;
+      case 'b':
+        opts.blacklist = true;
         break;
       case 'p' :
         opts.num_threads = atoll(optarg);

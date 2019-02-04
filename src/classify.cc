@@ -34,6 +34,7 @@ static const taxid_t AMBIGUOUS_SPAN_TAXON = TAXID_MAX - 2;
 
 struct Options {
   string index_filename;
+  vector<string> blacklist_filenames;
   string taxonomy_filename;
   string options_filename;
   string report_filename;
@@ -81,11 +82,11 @@ struct OutputData {
 void ParseCommandLine(int argc, char **argv, Options &opts);
 void usage(int exit_code=EX_USAGE);
 void ProcessFiles(const char *filename1, const char *filename2,
-    KeyValueStore *hash, Taxonomy &tax,
+    KeyValueStore *hash, vector<KeyValueStore*>& blacklist_hashes, Taxonomy &tax,
     IndexOptions &idx_opts, Options &opts, ClassificationStats &stats,
     OutputStreamData &outputs, taxon_counts_t &call_counts);
 taxid_t ClassifySequence(Sequence &dna, Sequence &dna2, ostringstream &koss,
-    KeyValueStore *hash, Taxonomy &tax, IndexOptions &idx_opts,
+    KeyValueStore *hash, vector<KeyValueStore*>& blacklist_hashes, Taxonomy &tax, IndexOptions &idx_opts,
     Options &opts, ClassificationStats &stats, MinimizerScanner &scanner,
     vector<taxid_t> &taxa, taxon_counts_t &hit_counts,
     vector<string> &tx_frames);
@@ -126,6 +127,12 @@ int main(int argc, char **argv) {
   Taxonomy taxonomy(opts.taxonomy_filename, opts.use_memory_mapping);
   KeyValueStore *hash_ptr = new CompactHashTable(opts.index_filename, opts.use_memory_mapping);
 
+  vector<KeyValueStore*> blacklist_ptrs;
+  for (auto &fn: opts.blacklist_filenames) {
+    // cout << fn << endl;
+    blacklist_ptrs.push_back(new CompactHashTable(fn, opts.use_memory_mapping));
+  }
+
   cerr << " done." << endl;
 
   ClassificationStats stats = {0, 0, 0};
@@ -138,7 +145,7 @@ int main(int argc, char **argv) {
   if (optind == argc) {
     if (opts.paired_end_processing && ! opts.single_file_pairs)
       errx(EX_USAGE, "paired end processing used with no files specified");
-    ProcessFiles(nullptr, nullptr, hash_ptr, taxonomy, idx_opts, opts, stats, outputs, call_counts);
+    ProcessFiles(nullptr, nullptr, hash_ptr, blacklist_ptrs, taxonomy, idx_opts, opts, stats, outputs, call_counts);
   }
   else {
     for (int i = optind; i < argc; i++) {
@@ -146,11 +153,11 @@ int main(int argc, char **argv) {
         if (i + 1 == argc) {
           errx(EX_USAGE, "paired end processing used with unpaired file");
         }
-        ProcessFiles(argv[i], argv[i+1], hash_ptr, taxonomy, idx_opts, opts, stats, outputs, call_counts);
+        ProcessFiles(argv[i], argv[i+1], hash_ptr, blacklist_ptrs, taxonomy, idx_opts, opts, stats, outputs, call_counts);
         i += 1;
       }
       else {
-        ProcessFiles(argv[i], nullptr, hash_ptr, taxonomy, idx_opts, opts, stats, outputs, call_counts);
+        ProcessFiles(argv[i], nullptr, hash_ptr, blacklist_ptrs, taxonomy, idx_opts, opts, stats, outputs, call_counts);
       }
     }
   }
@@ -207,7 +214,7 @@ void ReportStats(struct timeval time1, struct timeval time2,
 }
 
 void ProcessFiles(const char *filename1, const char *filename2,
-    KeyValueStore *hash, Taxonomy &tax,
+    KeyValueStore *hash, vector<KeyValueStore*>& blacklist_hashes, Taxonomy &tax,
     IndexOptions &idx_opts, Options &opts, ClassificationStats &stats,
     OutputStreamData &outputs, taxon_counts_t &call_counts)
 {
@@ -306,7 +313,7 @@ void ProcessFiles(const char *filename1, const char *filename2,
             MaskLowQualityBases(seq2, opts.minimum_quality_score);
         }
         auto call = ClassifySequence(seq1, seq2,
-            kraken_oss, hash, tax, idx_opts, opts, thread_stats, scanner,
+            kraken_oss, hash, blacklist_hashes, tax, idx_opts, opts, thread_stats, scanner,
             taxa, hit_counts, translated_frames);
         if (call) {
           char buffer[1024] = "";
@@ -482,10 +489,10 @@ std::string TrimPairInfo(std::string &id) {
 }
 
 taxid_t ClassifySequence(Sequence &dna, Sequence &dna2, ostringstream &koss,
-    KeyValueStore *hash, Taxonomy &taxonomy, IndexOptions &idx_opts,
+    KeyValueStore *hash, vector<KeyValueStore*>& blacklist_hashes, Taxonomy &taxonomy, IndexOptions &idx_opts,
     Options &opts, ClassificationStats &stats, MinimizerScanner &scanner,
     vector<taxid_t> &taxa, taxon_counts_t &hit_counts,
-    vector<string> &tx_frames)
+                         vector<string> &tx_frames)
 {
   uint64_t *minimizer_ptr;
   taxid_t call = 0;
@@ -524,8 +531,17 @@ taxid_t ClassifySequence(Sequence &dna, Sequence &dna2, ostringstream &koss,
                 skip_lookup = true;
             }
             taxon = 0;
-            if (! skip_lookup)
-              taxon = hash->Get(*minimizer_ptr);
+            if (! skip_lookup) {
+              for (auto &bhash: blacklist_hashes) {
+                taxon = bhash->Get(*minimizer_ptr);
+                if (taxon) {
+                  break;
+                }
+              }
+              if (!taxon) {
+                taxon = hash->Get(*minimizer_ptr);
+              }
+            }
             last_taxon = taxon;
             last_minimizer = *minimizer_ptr;
           }
@@ -713,13 +729,16 @@ void MaskLowQualityBases(Sequence &dna, int minimum_quality_score) {
 void ParseCommandLine(int argc, char **argv, Options &opts) {
   int opt;
 
-  while ((opt = getopt(argc, argv, "h?H:t:o:T:p:R:C:U:O:Q:nmzqPSM")) != -1) {
+  while ((opt = getopt(argc, argv, "h?H:t:o:T:p:R:C:U:O:Q:B:nmzqPSM")) != -1) {
     switch (opt) {
       case 'h' : case '?' :
         usage(0);
         break;
       case 'H' :
         opts.index_filename = optarg;
+        break;
+      case 'B' :
+        opts.blacklist_filenames.push_back(optarg);
         break;
       case 't' :
         opts.taxonomy_filename = optarg;
