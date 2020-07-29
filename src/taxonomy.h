@@ -54,6 +54,7 @@ class Taxonomy {
   inline const size_t node_count() { return node_count_; }
 
   bool IsAAncestorOfB(uint64_t a, uint64_t b);
+  uint64_t PriorityTaxidRank(uint64_t taxid);
   uint64_t LowestCommonAncestor(uint64_t a, uint64_t b);
   void WriteToDisk(const char *filename);
   void MoveToMemory();
@@ -64,7 +65,7 @@ class Taxonomy {
       return 0;
     return external_to_internal_id_map_[external_id];
   }
-  std::set<uint64_t> priority_taxids;
+  std::vector<uint64_t> priority_taxids;
 
   private:
   void Init(const char *filename, bool memory_mapping);

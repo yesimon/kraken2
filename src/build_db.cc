@@ -91,7 +91,7 @@ int main(int argc, char **argv) {
   Taxonomy taxonomy(opts.taxonomy_filename.c_str());
   taxonomy.GenerateExternalToInternalIDMap();
   for (auto taxid : opts.priority_taxids) {
-    taxonomy.priority_taxids.insert(taxonomy.GetInternalID(taxid));
+    taxonomy.priority_taxids.push_back(taxonomy.GetInternalID(taxid));
   }
   size_t bits_needed_for_value = 1;
   while ((1 << bits_needed_for_value) < (ssize_t) taxonomy.node_count())
@@ -373,7 +373,8 @@ void ProcessSequence(string &seq, uint64_t taxid,
     CompactHashTable &hash, Taxonomy &tax, MinimizerScanner &scanner,
     uint64_t min_clear_hash_value)
 {
-  bool seq_is_priority = tax.priority_taxids.count(taxid);
+  uint64_t seq_priority_rank = tax.PriorityTaxidRank(taxid);
+
   scanner.LoadSequence(seq);
   uint64_t *minimizer_ptr;
   bool ambig_flag;
@@ -384,13 +385,23 @@ void ProcessSequence(string &seq, uint64_t taxid,
       continue;
     hvalue_t existing_taxid = 0;
     hvalue_t new_taxid = taxid;
-    if (seq_is_priority) {
-      hash.CompareAndSet(*minimizer_ptr, new_taxid, &existing_taxid) ||
-        hash.CompareAndSet(*minimizer_ptr, new_taxid, &existing_taxid);
+
+
+    if (seq_priority_rank) {
+      bool was_set = hash.CompareAndSet(*minimizer_ptr, new_taxid, &existing_taxid);
+      if (! was_set) {
+        uint64_t existing_priority_rank = tax.PriorityTaxidRank(existing_taxid);
+        // Overwrite taxid if existing taxid is not a priority taxid, or has lower priority
+        if (! existing_priority_rank || seq_priority_rank < existing_priority_rank) {
+          hash.CompareAndSet(*minimizer_ptr, new_taxid, &existing_taxid);
+        }
+      }
     }
+    // Seq is not priority, but an existing taxid in the db might be
     else {
       while (! hash.CompareAndSet(*minimizer_ptr, new_taxid, &existing_taxid)) {
-        if (! tax.priority_taxids.count(existing_taxid)) {
+        uint64_t existing_priority_rank = tax.PriorityTaxidRank(existing_taxid);
+        if (! existing_priority_rank) {
           new_taxid = tax.LowestCommonAncestor(new_taxid, existing_taxid);
         } else {
           new_taxid = existing_taxid;

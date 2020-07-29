@@ -256,6 +256,17 @@ bool Taxonomy::IsAAncestorOfB(uint64_t a, uint64_t b) {
   return b == a;
 }
 
+
+
+uint64_t Taxonomy::PriorityTaxidRank(uint64_t taxid) {
+  auto taxid_itr = std::find(priority_taxids.begin(), priority_taxids.end(), taxid);
+  if (taxid_itr != priority_taxids.end()) {
+    return std::distance(priority_taxids.begin(), taxid_itr) + 1;
+  } else {
+    return 0;
+  }
+}
+
 // Logic here depends on higher nodes having smaller IDs
 // Idea: track two nodes, advance lower tracker up tree, trackers meet @ LCA
 uint64_t Taxonomy::LowestCommonAncestor(uint64_t a, uint64_t b) {
